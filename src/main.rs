@@ -159,20 +159,12 @@ impl Network {
             }
         }
         let nbatch = mini_batch_indices.len() as f64;
-        self.weights = self
-            .weights
-            .iter()
-            .cloned()
-            .zip(nabla_w.iter().map(|nw| ((eta / nbatch) * nw)))
-            .map(|(w, f)| w - f)
-            .collect();
-        self.biases = self
-            .biases
-            .iter()
-            .cloned()
-            .zip(nabla_b.iter().map(|nb| ((eta / nbatch) * nb)))
-            .map(|(b, f)| b - f)
-            .collect()
+        for i in 0..self.weights.len() {
+            self.weights[i] = &self.weights[i] - &(&nabla_w[i] * eta / nbatch);
+        }
+        for i in 0..self.biases.len() {
+            self.biases[i] = &self.biases[i] - &(&nabla_b[i] * eta / nbatch);
+        }
     }
 
     fn backprop(&self, data: &MnistData) -> (Vec<Array2<f64>>, Vec<Array2<f64>>) {
