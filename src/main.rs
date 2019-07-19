@@ -2,6 +2,8 @@ use flate2::read::GzDecoder;
 use ndarray::{Array, Array2};
 use ndarray_rand::RandomExt;
 use rand::distributions::Uniform;
+use rand::seq::SliceRandom;
+use rand::thread_rng;
 use serde::Deserialize;
 use serde_json;
 use std::fs::File;
@@ -15,16 +17,16 @@ struct MnistDataRead {
 }
 
 struct MnistData {
-    images: Vec<Array2<f64>>,
-    classification: Vec<usize>,
+    image: Array2<f64>,
+    classification: usize,
 }
 
 #[derive(Debug)]
 struct Network {
     num_layers: usize,
     sizes: Vec<usize>,
-    biases: Vec<Array2<f64>>,
-    weights: Vec<Array2<f64>>,
+    pub biases: Vec<Array2<f64>>,
+    pub weights: Vec<Array2<f64>>,
 }
 
 impl Network {
@@ -55,18 +57,101 @@ impl Network {
         ret
     }
 
-    fn evaluate(&self, test_data: &MnistData) -> usize {
+    fn evaluate(&self, test_data: &[MnistData]) -> usize {
         let test_results = test_data
-            .images
             .iter()
-            .map(|x| self.feedforward(x))
+            .map(|x| self.feedforward(&x.image))
             .map(|x| argmax(&x))
             .collect::<Vec<usize>>();
         test_results
             .iter()
-            .zip(test_data.classification.iter())
-            .map(|(x, y)| (x == y) as usize)
+            .zip(test_data.iter())
+            .map(|(x, y)| (*x == y.classification) as usize)
             .sum()
+    }
+
+    fn SGD(
+        &mut self,
+        training_data: &[MnistData],
+        epochs: usize,
+        mini_batch_size: usize,
+        eta: f64,
+        test_data: &[MnistData],
+    ) {
+        let n_test = test_data.len();
+        let n = training_data.len();
+        let mut indices = (0..n).collect::<Vec<usize>>();
+        for j in 0..epochs {
+            indices.shuffle(&mut thread_rng());
+            for sl in (0..n)
+                .step_by(mini_batch_size)
+                .collect::<Vec<usize>>()
+                .windows(2)
+            {
+                self.update_mini_batch(training_data, &indices[sl[0]..sl[1]], eta);
+            }
+            println!("Epoch {}: {} / {}", j, self.evaluate(test_data), n_test);
+        }
+    }
+
+    fn update_mini_batch(
+        &mut self,
+        training_data: &[MnistData],
+        mini_batch_indices: &[usize],
+        eta: f64,
+    ) {
+        let nabla_b: Vec<Array2<f64>> = self
+            .biases
+            .iter()
+            .map(|b| Array2::zeros(to_tuple(b.shape())))
+            .collect();
+        let nabla_w: Vec<Array2<f64>> = self
+            .weights
+            .iter()
+            .map(|w| Array2::zeros(to_tuple(w.shape())))
+            .collect();
+        for i in mini_batch_indices {
+            let (delta_nabla_b, delta_nabla_w) = self.backprop(&training_data[*i]);
+            let nabla_b: Vec<Array2<f64>> = nabla_b
+                .iter()
+                .zip(delta_nabla_b.iter())
+                .map(|(nb, dnb)| nb + dnb)
+                .collect();
+            let nabla_w: Vec<Array2<f64>> = nabla_w
+                .iter()
+                .zip(delta_nabla_w.iter())
+                .map(|(nw, dnw)| nw + dnw)
+                .collect();
+        }
+        let nbatch = mini_batch_indices.len() as f64;
+        self.weights = self
+            .weights
+            .iter()
+            .cloned()
+            .zip(nabla_w.iter().map(|nw| ((eta / nbatch) * nw)))
+            .map(|(w, f)| w - f)
+            .collect();
+        self.biases = self
+            .biases
+            .iter()
+            .cloned()
+            .zip(nabla_b.iter().map(|nb| ((eta / nbatch) * nb)))
+            .map(|(b, f)| b - f)
+            .collect()
+    }
+
+    fn backprop(&self, data: &MnistData) -> (Vec<Array2<f64>>, Vec<Array2<f64>>) {
+        let nabla_b: Vec<Array2<f64>> = self
+            .biases
+            .iter()
+            .map(|b| Array2::zeros(to_tuple(b.shape())))
+            .collect();
+        let nabla_w: Vec<Array2<f64>> = self
+            .weights
+            .iter()
+            .map(|w| Array2::zeros(to_tuple(w.shape())))
+            .collect();
+        (nabla_b, nabla_w)
     }
 }
 
@@ -77,20 +162,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn load_data(path: &Path) -> Result<MnistData, std::io::Error> {
+fn load_data(path: &Path) -> Result<Vec<MnistData>, std::io::Error> {
     let f = File::open(path)?;
     let mut gz = GzDecoder::new(f);
     let mut contents = String::new();
     gz.read_to_string(&mut contents)?;
     let data: MnistDataRead = serde_json::from_str(&contents)?;
-    let data: MnistData = MnistData {
-        images: data
-            .images
-            .into_iter()
-            .map(|x| Array::from_shape_vec((x.len(), 1), x).unwrap())
-            .collect::<Vec<Array2<f64>>>(),
-        classification: data.classification,
-    };
+    let data: Vec<MnistData> = data
+        .images
+        .into_iter()
+        .zip(data.classification.iter())
+        .map(|(x, y)| MnistData {
+            image: Array::from_shape_vec((x.len(), 1), x).unwrap(),
+            classification: *y,
+        })
+        .collect();
     Ok(data)
 }
 
@@ -110,4 +196,11 @@ fn argmax(a: &Array2<f64>) -> usize {
         }
     }
     ret
+}
+
+fn to_tuple(inp: &[usize]) -> (usize, usize) {
+    match inp {
+        [a, b] => (*a, *b),
+        _ => panic!(),
+    }
 }
