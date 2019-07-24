@@ -4,29 +4,16 @@ extern crate ndarray;
 #[macro_use(lazy_static)]
 extern crate lazy_static;
 
-use flate2::read::GzDecoder;
 use ndarray::{Array, Array2};
 use ndarray_rand::RandomExt;
 use rand::distributions::StandardNormal;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
-use serde::Deserialize;
-use serde_json;
-use std::fs::File;
-use std::io::Read;
 use std::path::Path;
 
-#[derive(Deserialize, Debug)]
-struct MnistDataRead {
-    images: Vec<Vec<f64>>,
-    classification: Vec<usize>,
-}
+mod mnist_reader;
 
-#[derive(Debug)]
-struct MnistData {
-    image: Array2<f64>,
-    classification: usize,
-}
+type MnistData = mnist_reader::MnistData;
 
 #[derive(Debug)]
 struct Network {
@@ -209,31 +196,11 @@ impl Network {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let test_data = load_data(Path::new("test_data.json.gz"))?;
-    let training_data = load_data(Path::new("training_data.json.gz"))?;
-    //let validation_data = load_data(Path::new("validation_data.json.gz"))?;
+    let test_data = mnist_reader::load_data(Path::new("test_data.json.gz"))?;
+    let training_data = mnist_reader::load_data(Path::new("training_data.json.gz"))?;
     let mut net = Network::new(&[784, 30, 10]);
     net.sgd(&training_data, 30, 10, 3.0, &test_data);
     Ok(())
-}
-
-fn load_data(path: &Path) -> Result<Vec<MnistData>, std::io::Error> {
-    println!("Loading {:?}", &path);
-    let f = File::open(path)?;
-    let mut gz = GzDecoder::new(f);
-    let mut contents = String::new();
-    gz.read_to_string(&mut contents)?;
-    let data: MnistDataRead = serde_json::from_str(&contents)?;
-    let data: Vec<MnistData> = data
-        .images
-        .into_iter()
-        .zip(data.classification.iter())
-        .map(|(x, y)| MnistData {
-            image: Array::from_shape_vec((x.len(), 1), x).unwrap(),
-            classification: *y,
-        })
-        .collect();
-    Ok(data)
 }
 
 fn sigmoid(z: &Array2<f64>) -> Array2<f64> {
