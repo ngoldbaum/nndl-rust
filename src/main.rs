@@ -9,11 +9,10 @@ use ndarray_rand::RandomExt;
 use rand::distributions::StandardNormal;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
-use std::path::Path;
 
 mod mnist_reader;
 
-type MnistData = mnist_reader::MnistData;
+type MnistImage = mnist_reader::MnistImage;
 
 #[derive(Debug)]
 struct Network {
@@ -83,7 +82,7 @@ impl Network {
         ret
     }
 
-    fn evaluate(&self, test_data: &[MnistData]) -> usize {
+    fn evaluate(&self, test_data: &[MnistImage]) -> usize {
         let test_results = test_data
             .iter()
             .map(|x| self.feedforward(&x.image))
@@ -92,17 +91,17 @@ impl Network {
         test_results
             .iter()
             .zip(test_data.iter())
-            .map(|(x, y)| (*x == y.classification) as usize)
+            .map(|(x, y)| (*x == y.classification as usize) as usize)
             .sum()
     }
 
     fn sgd(
         &mut self,
-        training_data: &[MnistData],
+        training_data: &[MnistImage],
         epochs: usize,
         mini_batch_size: usize,
         eta: f64,
-        test_data: &[MnistData],
+        test_data: &[MnistImage],
     ) {
         let n_test = test_data.len();
         let n = training_data.len();
@@ -122,7 +121,7 @@ impl Network {
 
     fn update_mini_batch(
         &mut self,
-        training_data: &[MnistData],
+        training_data: &[MnistImage],
         mini_batch_indices: &[usize],
         eta: f64,
     ) {
@@ -139,22 +138,22 @@ impl Network {
         for i in mini_batch_indices {
             let (delta_nabla_b, delta_nabla_w) = self.backprop(&training_data[*i]);
             for j in 0..nabla_b.len() {
-                nabla_b[j] = &nabla_b[j] + &delta_nabla_b[j];
+                nabla_b[j] += &delta_nabla_b[j];
             }
             for j in 0..nabla_w.len() {
-                nabla_w[j] = &nabla_w[j] + &delta_nabla_w[j];
+                nabla_w[j] += &delta_nabla_w[j];
             }
         }
         let nbatch = mini_batch_indices.len() as f64;
         for i in 0..self.weights.len() {
-            self.weights[i] = &self.weights[i] - &(&nabla_w[i] * eta / nbatch);
+            self.weights[i] -= &nabla_w[i].mapv(|x| x * eta / nbatch);
         }
         for i in 0..self.biases.len() {
-            self.biases[i] = &self.biases[i] - &(&nabla_b[i] * eta / nbatch);
+            self.biases[i] -= &nabla_b[i].mapv(|x| x * eta / nbatch);
         }
     }
 
-    fn backprop(&self, data: &MnistData) -> (Vec<Array2<f64>>, Vec<Array2<f64>>) {
+    fn backprop(&self, data: &MnistImage) -> (Vec<Array2<f64>>, Vec<Array2<f64>>) {
         let mut nabla_b: Vec<Array2<f64>> = self
             .biases
             .iter()
@@ -174,7 +173,7 @@ impl Network {
             zs.push(z);
             activations.push(activation.clone());
         }
-        let delta = self.cost_derivative(activations.last().unwrap(), data.classification)
+        let delta = self.cost_derivative(activations.last().unwrap(), data.classification as usize)
             * sigmoid_prime(zs.last().unwrap());
         let nbiases = self.biases.len();
         let nweights = self.weights.len();
@@ -196,10 +195,10 @@ impl Network {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let test_data = mnist_reader::load_data(Path::new("test_data.json.gz"))?;
-    let training_data = mnist_reader::load_data(Path::new("training_data.json.gz"))?;
+    let test_data = mnist_reader::load_data("t10k")?;
+    let training_data = mnist_reader::load_data("train")?;
     let mut net = Network::new(&[784, 30, 10]);
-    net.sgd(&training_data, 30, 10, 3.0, &test_data);
+    net.sgd(&training_data, 30, 20, 3.0, &test_data);
     Ok(())
 }
 

@@ -1,38 +1,83 @@
+use byteorder::{BigEndian, ReadBytesExt};
 use flate2::read::GzDecoder;
-use ndarray::{Array, Array2};
-use serde::Deserialize;
-use serde_json;
+use ndarray::Array2;
 use std::fs::File;
-use std::io::Read;
+use std::io::{Cursor, Read};
 use std::path::Path;
 
-#[derive(Deserialize, Debug)]
-struct MnistDataRead {
-    images: Vec<Vec<f64>>,
-    classification: Vec<usize>,
+#[derive(Debug)]
+pub struct MnistImage {
+    pub image: Array2<f64>,
+    pub classification: u8,
 }
 
 #[derive(Debug)]
-pub struct MnistData {
-    pub image: Array2<f64>,
-    pub classification: usize,
+struct MnistData {
+    sizes: Vec<i32>,
+    data: Vec<u8>,
 }
 
-pub fn load_data(path: &Path) -> Result<Vec<MnistData>, std::io::Error> {
+impl MnistData {
+    fn new(r: &mut Cursor<&[u8]>) -> Result<MnistData, std::io::Error> {
+        let magic_number = r.read_i32::<BigEndian>()?;
+
+        let mut sizes: Vec<i32> = Vec::new();
+        let mut data: Vec<u8> = Vec::new();
+
+        match magic_number {
+            2049 => {
+                sizes.push(r.read_i32::<BigEndian>()?);
+            }
+            2051 => {
+                sizes.push(r.read_i32::<BigEndian>()?);
+                sizes.push(r.read_i32::<BigEndian>()?);
+                sizes.push(r.read_i32::<BigEndian>()?);
+            }
+            _ => panic!(),
+        }
+
+        r.read_to_end(&mut data)?;
+
+        Ok(MnistData { sizes, data })
+    }
+}
+
+fn load_idx_file(path: &Path) -> Result<MnistData, std::io::Error> {
     println!("Loading {:?}", &path);
     let f = File::open(path)?;
     let mut gz = GzDecoder::new(f);
-    let mut contents = String::new();
-    gz.read_to_string(&mut contents)?;
-    let data: MnistDataRead = serde_json::from_str(&contents)?;
-    let data: Vec<MnistData> = data
-        .images
-        .into_iter()
-        .zip(data.classification.iter())
-        .map(|(x, y)| MnistData {
-            image: Array::from_shape_vec((x.len(), 1), x).unwrap(),
-            classification: *y,
+    let mut contents: Vec<u8> = Vec::new();
+    gz.read_to_end(&mut contents)?;
+    Ok(MnistData::new(&mut Cursor::new(&contents))?)
+}
+
+pub fn load_data(dataset_name: &str) -> Result<Vec<MnistImage>, std::io::Error> {
+    let filename = format!("{}-labels-idx1-ubyte.gz", dataset_name);
+    let label_path = Path::new(&filename);
+    let label_data = load_idx_file(&label_path)?;
+    let filename = format!("{}-images-idx3-ubyte.gz", dataset_name);
+    let images_path = Path::new(&filename);
+    let images_data = load_idx_file(&images_path)?;
+    let mut images: Vec<Array2<f64>> = Vec::new();
+    let image_shape = (images_data.sizes[1] * images_data.sizes[2]) as usize;
+
+    for i in 0..images_data.sizes[0] as usize {
+        let start = i * image_shape;
+        let image_data = images_data.data[start..start + image_shape].to_vec();
+        let image_data: Vec<f64> = image_data.into_iter().map(|x| x as f64 / 255.).collect();
+        images.push(Array2::from_shape_vec((image_shape, 1), image_data).unwrap());
+    }
+
+    let classifications: Vec<u8> = label_data.data.clone();
+
+    let mut ret: Vec<MnistImage> = Vec::new();
+
+    for (image, classification) in images.into_iter().zip(classifications.into_iter()) {
+        ret.push(MnistImage {
+            image,
+            classification,
         })
-        .collect();
-    Ok(data)
+    }
+
+    Ok(ret)
 }
