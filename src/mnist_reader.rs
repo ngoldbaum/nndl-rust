@@ -3,7 +3,6 @@ use flate2::read::GzDecoder;
 use ndarray::Array2;
 use std::fs::File;
 use std::io::{Cursor, Read};
-use std::path::Path;
 
 #[derive(Debug)]
 pub struct MnistImage {
@@ -18,7 +17,12 @@ struct MnistData {
 }
 
 impl MnistData {
-    fn new(r: &mut Cursor<&[u8]>) -> Result<MnistData, std::io::Error> {
+    fn new(f: &File) -> Result<MnistData, std::io::Error> {
+        let mut gz = GzDecoder::new(f);
+        let mut contents: Vec<u8> = Vec::new();
+        gz.read_to_end(&mut contents)?;
+        let mut r = Cursor::new(&contents);
+
         let magic_number = r.read_i32::<BigEndian>()?;
 
         let mut sizes: Vec<i32> = Vec::new();
@@ -42,22 +46,11 @@ impl MnistData {
     }
 }
 
-fn load_idx_file(path: &Path) -> Result<MnistData, std::io::Error> {
-    println!("Loading {:?}", &path);
-    let f = File::open(path)?;
-    let mut gz = GzDecoder::new(f);
-    let mut contents: Vec<u8> = Vec::new();
-    gz.read_to_end(&mut contents)?;
-    Ok(MnistData::new(&mut Cursor::new(&contents))?)
-}
-
 pub fn load_data(dataset_name: &str) -> Result<Vec<MnistImage>, std::io::Error> {
     let filename = format!("{}-labels-idx1-ubyte.gz", dataset_name);
-    let label_path = Path::new(&filename);
-    let label_data = load_idx_file(&label_path)?;
+    let label_data = &MnistData::new(&(File::open(filename))?)?;
     let filename = format!("{}-images-idx3-ubyte.gz", dataset_name);
-    let images_path = Path::new(&filename);
-    let images_data = load_idx_file(&images_path)?;
+    let images_data = &MnistData::new(&(File::open(filename))?)?;
     let mut images: Vec<Array2<f64>> = Vec::new();
     let image_shape = (images_data.sizes[1] * images_data.sizes[2]) as usize;
 

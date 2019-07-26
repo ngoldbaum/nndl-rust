@@ -18,8 +18,8 @@ type MnistImage = mnist_reader::MnistImage;
 struct Network {
     num_layers: usize,
     sizes: Vec<usize>,
-    pub biases: Vec<Array2<f64>>,
-    pub weights: Vec<Array2<f64>>,
+    biases: Vec<Array2<f64>>,
+    weights: Vec<Array2<f64>>,
 }
 
 lazy_static! {
@@ -125,31 +125,23 @@ impl Network {
         mini_batch_indices: &[usize],
         eta: f64,
     ) {
-        let mut nabla_b: Vec<Array2<f64>> = self
-            .biases
-            .iter()
-            .map(|b| Array2::zeros(to_tuple(b.shape())))
-            .collect();
-        let mut nabla_w: Vec<Array2<f64>> = self
-            .weights
-            .iter()
-            .map(|w| Array2::zeros(to_tuple(w.shape())))
-            .collect();
+        let mut nabla_b: Vec<Array2<f64>> = zero_vec_like(&self.biases);
+        let mut nabla_w: Vec<Array2<f64>> = zero_vec_like(&self.weights);
         for i in mini_batch_indices {
             let (delta_nabla_b, delta_nabla_w) = self.backprop(&training_data[*i]);
-            for j in 0..nabla_b.len() {
-                nabla_b[j] += &delta_nabla_b[j];
+            for (nb, dnb) in nabla_b.iter_mut().zip(delta_nabla_b.iter()) {
+                *nb += dnb;
             }
-            for j in 0..nabla_w.len() {
-                nabla_w[j] += &delta_nabla_w[j];
+            for (nw, dnw) in nabla_w.iter_mut().zip(delta_nabla_w.iter()) {
+                *nw += dnw;
             }
         }
         let nbatch = mini_batch_indices.len() as f64;
-        for i in 0..self.weights.len() {
-            self.weights[i] -= &nabla_w[i].mapv(|x| x * eta / nbatch);
+        for (w, nw) in self.weights.iter_mut().zip(nabla_w.iter()) {
+            *w -= &(nw.mapv(|x| x * eta / nbatch));
         }
-        for i in 0..self.biases.len() {
-            self.biases[i] -= &nabla_b[i].mapv(|x| x * eta / nbatch);
+        for (b, nb) in self.biases.iter_mut().zip(nabla_b.iter()) {
+            *b -= &(nb.mapv(|x| x * eta / nbatch));
         }
     }
 
@@ -225,4 +217,10 @@ fn to_tuple(inp: &[usize]) -> (usize, usize) {
         [a, b] => (*a, *b),
         _ => panic!(),
     }
+}
+
+fn zero_vec_like(inp: &[Array2<f64>]) -> Vec<Array2<f64>> {
+    inp.iter()
+        .map(|x| Array2::zeros(to_tuple(x.shape())))
+        .collect()
 }
