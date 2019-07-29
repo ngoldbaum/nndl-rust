@@ -138,10 +138,10 @@ impl Network {
         }
         let nbatch = mini_batch_indices.len() as f64;
         for (w, nw) in self.weights.iter_mut().zip(nabla_w.iter()) {
-            *w -= &(nw.mapv(|x| x * eta / nbatch));
+            *w -= &nw.mapv(|x| x * eta / nbatch);
         }
         for (b, nb) in self.biases.iter_mut().zip(nabla_b.iter()) {
-            *b -= &(nb.mapv(|x| x * eta / nbatch));
+            *b -= &nb.mapv(|x| x * eta / nbatch);
         }
     }
 
