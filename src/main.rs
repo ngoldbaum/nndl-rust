@@ -1,10 +1,10 @@
-#[macro_use(array)]
+#[macro_use(array, s)]
 extern crate ndarray;
 
 #[macro_use(lazy_static)]
 extern crate lazy_static;
 
-use ndarray::{Array, Array2};
+use ndarray::{Array, Array1, Array2, Axis};
 use ndarray_rand::RandomExt;
 use rand::distributions::StandardNormal;
 use rand::seq::SliceRandom;
@@ -23,37 +23,17 @@ struct Network {
 }
 
 lazy_static! {
-    static ref TRUE_ACTIVATIONS: [Array2<f64>; 10] = [
-        array![[1., 0., 0., 0., 0., 0., 0., 0., 0., 0.]]
-            .t()
-            .to_owned(),
-        array![[0., 1., 0., 0., 0., 0., 0., 0., 0., 0.]]
-            .t()
-            .to_owned(),
-        array![[0., 0., 1., 0., 0., 0., 0., 0., 0., 0.]]
-            .t()
-            .to_owned(),
-        array![[0., 0., 0., 1., 0., 0., 0., 0., 0., 0.]]
-            .t()
-            .to_owned(),
-        array![[0., 0., 0., 0., 1., 0., 0., 0., 0., 0.]]
-            .t()
-            .to_owned(),
-        array![[0., 0., 0., 0., 0., 1., 0., 0., 0., 0.]]
-            .t()
-            .to_owned(),
-        array![[0., 0., 0., 0., 0., 0., 1., 0., 0., 0.]]
-            .t()
-            .to_owned(),
-        array![[0., 0., 0., 0., 0., 0., 0., 1., 0., 0.]]
-            .t()
-            .to_owned(),
-        array![[0., 0., 0., 0., 0., 0., 0., 0., 1., 0.]]
-            .t()
-            .to_owned(),
-        array![[0., 0., 0., 0., 0., 0., 0., 0., 0., 1.]]
-            .t()
-            .to_owned(),
+    static ref TRUE_ACTIVATIONS: [Array1<f64>; 10] = [
+        array![1., 0., 0., 0., 0., 0., 0., 0., 0., 0.].to_owned(),
+        array![0., 1., 0., 0., 0., 0., 0., 0., 0., 0.].to_owned(),
+        array![0., 0., 1., 0., 0., 0., 0., 0., 0., 0.].to_owned(),
+        array![0., 0., 0., 1., 0., 0., 0., 0., 0., 0.].to_owned(),
+        array![0., 0., 0., 0., 1., 0., 0., 0., 0., 0.].to_owned(),
+        array![0., 0., 0., 0., 0., 1., 0., 0., 0., 0.].to_owned(),
+        array![0., 0., 0., 0., 0., 0., 1., 0., 0., 0.].to_owned(),
+        array![0., 0., 0., 0., 0., 0., 0., 1., 0., 0.].to_owned(),
+        array![0., 0., 0., 0., 0., 0., 0., 0., 1., 0.].to_owned(),
+        array![0., 0., 0., 0., 0., 0., 0., 0., 0., 1.].to_owned(),
     ];
 }
 
@@ -63,8 +43,8 @@ impl Network {
         let mut biases: Vec<Array2<f64>> = Vec::new();
         let mut weights: Vec<Array2<f64>> = Vec::new();
         for i in 1..num_layers {
-            biases.push(Array::random((sizes[i], 1), StandardNormal));
-            weights.push(Array::random((sizes[i], sizes[i - 1]), StandardNormal));
+            biases.push(Array::random((1, sizes[i]), StandardNormal));
+            weights.push(Array::random((sizes[i - 1], sizes[i]), StandardNormal));
         }
         Network {
             num_layers: num_layers,
@@ -77,7 +57,7 @@ impl Network {
     fn feedforward(&self, a: &Array2<f64>) -> Array2<f64> {
         let mut ret = a.clone();
         for (w, b) in self.weights.iter().zip(self.biases.iter()) {
-            ret = sigmoid(&(w.dot(&ret) + b));
+            ret = sigmoid(&(ret.dot(w) + b));
         }
         ret
     }
@@ -85,7 +65,7 @@ impl Network {
     fn evaluate(&self, test_data: &[MnistImage]) -> usize {
         let test_results = test_data
             .iter()
-            .map(|x| self.feedforward(&x.image))
+            .map(|x| self.feedforward(&x.image.clone().reversed_axes()))
             .map(|x| argmax(&x))
             .collect::<Vec<usize>>();
         test_results
@@ -125,17 +105,11 @@ impl Network {
         mini_batch_indices: &[usize],
         eta: f64,
     ) {
-        let mut nabla_b: Vec<Array2<f64>> = zero_vec_like(&self.biases);
-        let mut nabla_w: Vec<Array2<f64>> = zero_vec_like(&self.weights);
-        for i in mini_batch_indices {
-            let (delta_nabla_b, delta_nabla_w) = self.backprop(&training_data[*i]);
-            for (nb, dnb) in nabla_b.iter_mut().zip(delta_nabla_b.iter()) {
-                *nb += dnb;
-            }
-            for (nw, dnw) in nabla_w.iter_mut().zip(delta_nabla_w.iter()) {
-                *nw += dnw;
-            }
-        }
+        let batch: Vec<&MnistImage> = mini_batch_indices
+            .iter()
+            .map(|i| &training_data[*i])
+            .collect();
+        let (nabla_b, nabla_w) = self.backprop(&batch);
         let nbatch = mini_batch_indices.len() as f64;
         for (w, nw) in self.weights.iter_mut().zip(nabla_w.iter()) {
             *w -= &nw.mapv(|x| x * eta / nbatch);
@@ -145,7 +119,7 @@ impl Network {
         }
     }
 
-    fn backprop(&self, data: &MnistImage) -> (Vec<Array2<f64>>, Vec<Array2<f64>>) {
+    fn backprop(&self, data: &[&MnistImage]) -> (Vec<Array2<f64>>, Vec<Array2<f64>>) {
         let mut nabla_b: Vec<Array2<f64>> = self
             .biases
             .iter()
@@ -156,33 +130,52 @@ impl Network {
             .iter()
             .map(|w| Array2::zeros(to_tuple(w.shape())))
             .collect();
-        let mut activation = data.image.clone();
+        let imshape = data[0].image.shape();
+        let nbatch = data.len();
+        let mut activation = Array2::zeros((nbatch, imshape[0]));
+        let mut classifications = Array2::zeros((nbatch, 10));
+        for (i, d) in data.iter().enumerate() {
+            activation
+                .slice_mut(s![i, ..])
+                .assign(&d.image.slice(s![.., 0]));
+            classifications
+                .slice_mut(s![i, ..])
+                .assign(&TRUE_ACTIVATIONS[d.classification as usize]);
+        }
         let mut activations = vec![activation.clone()];
         let mut zs: Vec<Array2<f64>> = Vec::new();
         for (b, w) in self.biases.iter().zip(self.weights.iter()) {
-            let z = w.dot(&activation) + b;
+            let z = activation.dot(w) + b;
             activation = sigmoid(&z);
             zs.push(z);
             activations.push(activation.clone());
         }
-        let delta = self.cost_derivative(activations.last().unwrap(), data.classification as usize)
+        let delta = self.cost_derivative(activations.last().unwrap(), &classifications)
             * sigmoid_prime(zs.last().unwrap());
         let nbiases = self.biases.len();
         let nweights = self.weights.len();
-        nabla_b[nbiases - 1] = delta.clone();
-        nabla_w[nbiases - 1] = delta.dot(&activations[activations.len() - 2].t());
+        nabla_b[nbiases - 1]
+            .slice_mut(s![0, ..])
+            .assign(&delta.sum_axis(Axis(0)));
+        nabla_w[nbiases - 1] = activations[activations.len() - 2].t().dot(&delta);
         for l in 2..self.num_layers {
             let z = &zs[zs.len() - l];
             let sp = sigmoid_prime(z);
-            let delta = self.weights[nweights - l + 1].t().dot(&delta) * sp;
-            nabla_b[nbiases - l] = delta.clone();
-            nabla_w[nweights - l] = delta.dot(&activations[activations.len() - l - 1].t());
+            let delta = delta.dot(&self.weights[nweights - l + 1].t()) * sp;
+            nabla_b[nbiases - l]
+                .slice_mut(s![0, ..])
+                .assign(&delta.sum_axis(Axis(0)));
+            nabla_w[nweights - l] = activations[activations.len() - l - 1].t().dot(&delta);
         }
         (nabla_b, nabla_w)
     }
 
-    fn cost_derivative(&self, output_activations: &Array2<f64>, y: usize) -> Array2<f64> {
-        output_activations - &TRUE_ACTIVATIONS[y]
+    fn cost_derivative(
+        &self,
+        output_activations: &Array2<f64>,
+        classifications: &Array2<f64>,
+    ) -> Array2<f64> {
+        output_activations - classifications
     }
 }
 
@@ -205,7 +198,7 @@ fn sigmoid_prime(z: &Array2<f64>) -> Array2<f64> {
 fn argmax(a: &Array2<f64>) -> usize {
     let mut ret = 0;
     for (i, el) in a.iter().enumerate() {
-        if *el > a[[ret, 0]] {
+        if *el > a[[0, ret]] {
             ret = i;
         }
     }
@@ -217,10 +210,4 @@ fn to_tuple(inp: &[usize]) -> (usize, usize) {
         [a, b] => (*a, *b),
         _ => panic!(),
     }
-}
-
-fn zero_vec_like(inp: &[Array2<f64>]) -> Vec<Array2<f64>> {
-    inp.iter()
-        .map(|x| Array2::zeros(to_tuple(x.shape())))
-        .collect()
 }
